@@ -1,0 +1,17 @@
+
+.idea/
+*.iml
+
+
+**/venv/
+venv/
+
+
+**/runs/
+**/clips/
+*.pt
+*.mp4
+*.avi
+
+
+**/node_modules/

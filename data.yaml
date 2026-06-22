@@ -1,0 +1,19 @@
+# Formula 4 off-track segmentation dataset (YOLO format)
+# Разметка: полигоны в splits/labels/{train,val,test}/*.txt
+# Строка: <class_id> x1 y1 x2 y2 ... (координаты нормализованы 0–1)
+#
+# Классы:
+#   0 — трасса (track)
+#   1 — колёса (wheel)
+#   2 — машины (car)
+
+path: ./splits
+train: images/train
+val: images/val
+test: images/test
+
+nc: 3
+names:
+  0: track
+  1: wheel
+  2: car
