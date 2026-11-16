@@ -29,6 +29,7 @@ app.add_middleware(
 )
 
 os.makedirs("clips", exist_ok=True)
+# Исправлено: FastAPI снова слушает /clips, так как Nginx отрезает /api/ при проксировании
 app.mount("/clips", StaticFiles(directory="clips"), name="clips")
 
 
@@ -38,19 +39,20 @@ def generate_mjpeg_stream():
         if frame is None:
             time.sleep(0.1)
             continue
-        ret, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        ret, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
         if not ret:
             continue
-        yield (b'--frame\r\n'
-               b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+        yield (
+            b"--frame\r\n"
+            b"Content-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n"
+        )
         time.sleep(0.03)
 
 
 @app.get("/video_feed")
 def video_feed():
     return StreamingResponse(
-        generate_mjpeg_stream(),
-        media_type="multipart/x-mixed-replace; boundary=frame"
+        generate_mjpeg_stream(), media_type="multipart/x-mixed-replace; boundary=frame"
     )
 
 
@@ -66,17 +68,20 @@ def get_incidents():
         reader = csv.DictReader(f)
         for row in reader:
             clip_name = row.get("clip", "").strip()
+            # Оставляем путь /clips/, фронтенд сам дописывает префикс /api/
             clip_url = f"/clips/{clip_name}" if clip_name else ""
 
-            incidents.append({
-                "id": int(row["incident"]),
-                "time": row["timestamp"],
-                "car": int(row["car_id"]),
-                "wheels": int(row["wheels_out"]),
-                "type": row["type"],
-                "detail": "Выезд за пределы трассы",
-                "clip": clip_url
-            })
+            incidents.append(
+                {
+                    "id": int(row["incident"]),
+                    "time": row["timestamp"],
+                    "car": int(row["car_id"]),
+                    "wheels": int(row["wheels_out"]),
+                    "type": row["type"],
+                    "detail": "Выезд за пределы трассы",
+                    "clip": clip_url,
+                }
+            )
 
     incidents.sort(key=lambda x: x["id"], reverse=True)
     return incidents

@@ -16,7 +16,7 @@ export const LiveCamera = ({active, onClick}) => {
 
 
             <img
-                src="http://localhost:8000/video_feed"
+                src="api/video_feed"
                 alt="Live Race Feed"
                 className="w-full h-full object-cover"
             />

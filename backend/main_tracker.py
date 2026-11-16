@@ -9,15 +9,14 @@ from collections import deque
 from datetime import datetime
 from ultralytics import YOLO
 
-
 MODEL_PATH = "runs/segment/train/weights/best.pt"
-VIDEO_INPUT = "race_2.mp4"
+VIDEO_INPUT = "Race.mp4"
 CLIPS_DIR = "clips"
 LOG_FILE = "incidents.csv"
 
 MIN_TRACK_AREA = 20_000
 MASK_SMOOTH_FRAMES = 10
-VIOLATION_FRAMES = 3
+VIOLATION_FRAMES = 2
 CLIP_PRE_FRAMES = 60
 CLIP_POST_FRAMES = 60
 INPAINT_KERNEL_SIZE = 51
@@ -34,15 +33,21 @@ def convert_to_mp4(avi_path, mp4_path):
     try:
 
         cmd = [
-            'ffmpeg', '-y',
-            '-i', avi_path,
-            '-c:v', 'libx264',
-            '-preset', 'fast',
-            '-crf', '23',
-            '-pix_fmt', 'yuv420p',
-            mp4_path
+            "ffmpeg",
+            "-y",
+            "-i",
+            avi_path,
+            "-c:v",
+            "libx264",
+            "-preset",
+            "fast",
+            "-crf",
+            "23",
+            "-pix_fmt",
+            "yuv420p",
+            mp4_path,
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=90)
 
         if result.returncode == 0 and os.path.exists(mp4_path):
             os.remove(avi_path)
@@ -64,7 +69,9 @@ def convert_to_mp4(avi_path, mp4_path):
 
 
 def filter_track_mask(raw_mask, min_area):
-    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(raw_mask, connectivity=8)
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
+        raw_mask, connectivity=8
+    )
     filtered = np.zeros_like(raw_mask)
     for label in range(1, num_labels):
         if stats[label, cv2.CC_STAT_AREA] >= min_area:
@@ -87,10 +94,14 @@ class TrackMaskSmoother:
 def restore_track_under_cars(track_mask, car_masks):
     if not car_masks:
         return track_mask
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (INPAINT_KERNEL_SIZE, INPAINT_KERNEL_SIZE))
+    kernel = cv2.getStructuringElement(
+        cv2.MORPH_ELLIPSE, (INPAINT_KERNEL_SIZE, INPAINT_KERNEL_SIZE)
+    )
     result = cv2.dilate(track_mask, kernel, iterations=1)
     for car_mask in car_masks:
-        contours, _ = cv2.findContours(car_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        contours, _ = cv2.findContours(
+            car_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
         if contours:
             hull = cv2.convexHull(np.vstack(contours))
             cv2.fillConvexPoly(result, hull, 1)
@@ -100,8 +111,10 @@ def restore_track_under_cars(track_mask, car_masks):
 def wheel_belongs_to_car(w_box, car_bbox, margin=20):
     w_cx = (w_box[0] + w_box[2]) / 2
     w_cy = (w_box[1] + w_box[3]) / 2
-    return (car_bbox[0] - margin <= w_cx <= car_bbox[2] + margin and
-            car_bbox[1] - margin <= w_cy <= car_bbox[3] + margin)
+    return (
+        car_bbox[0] - margin <= w_cx <= car_bbox[2] + margin
+        and car_bbox[1] - margin <= w_cy <= car_bbox[3] + margin
+    )
 
 
 def is_wheel_off_track(wheel_mask, track_mask_restored):
@@ -120,7 +133,7 @@ class RaceTracker:
         self.is_running = False
         self.thread = None
 
-        self.incident_id = 0
+        self.incident_id = self._get_last_incident_id()
         self.violation_counters = {}
         self.active_violations = set()
         self.active_clip_writers = {}
@@ -145,6 +158,23 @@ class RaceTracker:
         with self.lock:
             return self.latest_frame.copy() if self.latest_frame is not None else None
 
+    def _get_last_incident_id(self):
+        """Считывает последний ID инцидента из CSV-лога, чтобы не сбрасывать нумерацию при перезапуске."""
+        if not os.path.exists(LOG_FILE):
+            return 0
+        try:
+            with open(LOG_FILE, "r", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                ids = [
+                    int(row["incident"])
+                    for row in reader
+                    if row.get("incident", "").isdigit()
+                ]
+                return max(ids) if ids else 0
+        except Exception as e:
+            print(f"⚠️ Не удалось прочитать последний ID из CSV: {e}")
+            return 0
+
     def _process_video(self):
         print(f"🎬 Загрузка модели из {MODEL_PATH}...")
         model = YOLO(MODEL_PATH)
@@ -162,12 +192,12 @@ class RaceTracker:
 
         print(f"📊 Видео: {frame_width}x{frame_height} @ {fps} FPS")
 
-
         print("🔍 Тестирование VideoWriter...")
-        test_path = os.path.join(CLIPS_DIR, "test.avi")
-        test_fourcc = cv2.VideoWriter_fourcc(*'MJPG')
-        test_writer = cv2.VideoWriter(test_path, test_fourcc, fps, (frame_width, frame_height))
-
+        test_path = os.path.join(CLIPS_DIR, "test.avi")  # Меняем на .avi
+        test_fourcc = cv2.VideoWriter_fourcc(*"MJPG")  # Меняем на MJPG
+        test_writer = cv2.VideoWriter(
+            test_path, test_fourcc, fps, (frame_width, frame_height)
+        )
         if test_writer.isOpened():
             test_frame = np.zeros((frame_height, frame_width, 3), dtype=np.uint8)
             test_frame[:] = (128, 128, 128)
@@ -187,13 +217,14 @@ class RaceTracker:
             self.is_running = False
             return
 
-
         try:
-            subprocess.run(['ffmpeg', '-version'], capture_output=True, timeout=5)
+            subprocess.run(["ffmpeg", "-version"], capture_output=True, timeout=5)
             print("✅ FFmpeg найден — клипы будут конвертироваться в MP4")
         except:
             print("⚠️ FFmpeg не найден — клипы будут сохраняться как AVI")
-            print("   Установите FFmpeg для конвертации в MP4: https://ffmpeg.org/download.html")
+            print(
+                "   Установите FFmpeg для конвертации в MP4: https://ffmpeg.org/download.html"
+            )
 
         smoother = TrackMaskSmoother(MASK_SMOOTH_FRAMES)
         frame_no = 0
@@ -201,12 +232,22 @@ class RaceTracker:
         while self.is_running and cap.isOpened():
             ret, frame = cap.read()
             if not ret:
+                print(
+                    "⚠️ Видео закончилось или не может быть прочитано. Пробуем перезапустить..."
+                )
                 cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                continue
+                ret, frame = cap.read()
+                if not ret:
+                    print(
+                        "❌ Критическая ошибка: Не удается прочитать кадры из Race.mp4. Выходим."
+                    )
+                    break
 
             frame_no += 1
             overlay = frame.copy()
-            results = model.track(frame, persist=True, verbose=False, tracker="bytetrack.yaml")
+            results = model.track(
+                frame, persist=True, verbose=False, tracker="bytetrack.yaml"
+            )
 
             cars, wheels = [], []
             track_mask_raw = np.zeros((frame_height, frame_width), dtype=np.uint8)
@@ -218,7 +259,11 @@ class RaceTracker:
 
                 for i, box in enumerate(boxes):
                     cls_id = int(box.cls[0].item())
-                    mask_resized = cv2.resize(masks[i], (frame_width, frame_height), interpolation=cv2.INTER_NEAREST)
+                    mask_resized = cv2.resize(
+                        masks[i],
+                        (frame_width, frame_height),
+                        interpolation=cv2.INTER_NEAREST,
+                    )
                     binary_mask = (mask_resized > 0.5).astype(np.uint8)
 
                     if cls_id == 0:
@@ -226,20 +271,34 @@ class RaceTracker:
                         track_detected = True
                     elif cls_id == 2:
                         track_id = int(box.id[0].item()) if box.id is not None else -1
-                        cars.append({"id": track_id, "mask": binary_mask, "bbox": box.xyxy[0].cpu().numpy()})
+                        cars.append(
+                            {
+                                "id": track_id,
+                                "mask": binary_mask,
+                                "bbox": box.xyxy[0].cpu().numpy(),
+                            }
+                        )
                     elif cls_id == 1:
-                        wheels.append({"mask": binary_mask, "bbox": box.xyxy[0].cpu().numpy()})
+                        wheels.append(
+                            {"mask": binary_mask, "bbox": box.xyxy[0].cpu().numpy()}
+                        )
 
             if track_detected:
                 track_filtered = filter_track_mask(track_mask_raw, MIN_TRACK_AREA)
                 track_stable = smoother.update(track_filtered)
             else:
-                track_stable = smoother.update(np.zeros((frame_height, frame_width), dtype=np.uint8))
+                track_stable = smoother.update(
+                    np.zeros((frame_height, frame_width), dtype=np.uint8)
+                )
 
-            track_analysis = restore_track_under_cars(track_stable, [c["mask"] for c in cars])
+            track_analysis = restore_track_under_cars(
+                track_stable, [c["mask"] for c in cars]
+            )
 
             if np.any(track_stable > 0):
-                contours, _ = cv2.findContours(track_stable, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                contours, _ = cv2.findContours(
+                    track_stable, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+                )
                 cv2.drawContours(overlay, contours, -1, (0, 220, 100), 2)
 
             for car in cars:
@@ -253,25 +312,29 @@ class RaceTracker:
                     if not wheel_belongs_to_car(wheel["bbox"], car_bbox):
                         continue
                     overlay[wheel["mask"] == 1] = [0, 160, 255]
-                    if track_available and is_wheel_off_track(wheel["mask"], track_analysis):
+                    if track_available and is_wheel_off_track(
+                        wheel["mask"], track_analysis
+                    ):
                         off_count += 1
                         overlay[wheel["mask"] == 1] = [0, 0, 220]
 
                 if off_count > 0:
-                    self.violation_counters[car_id] = self.violation_counters.get(car_id, 0) + 1
+                    self.violation_counters[car_id] = (
+                        self.violation_counters.get(car_id, 0) + 1
+                    )
                 else:
                     self.violation_counters[car_id] = 0
                     self.active_violations.discard(car_id)
 
-
-                if (self.violation_counters.get(car_id, 0) >= VIOLATION_FRAMES and
-                        car_id not in self.active_violations):
+                if (
+                    self.violation_counters.get(car_id, 0) >= VIOLATION_FRAMES
+                    and car_id not in self.active_violations
+                ):
 
                     self.active_violations.add(car_id)
                     self.incident_id += 1
                     ts_str = datetime.now().strftime("%H:%M:%S.%f")[:-3]
                     itype = "FULL_OFF" if off_count == 4 else "PARTIAL_OFF"
-
 
                     temp_name = f"incident_{self.incident_id:03d}_car{car_id}.avi"
                     temp_path = os.path.abspath(os.path.join(CLIPS_DIR, temp_name))
@@ -279,11 +342,15 @@ class RaceTracker:
                     final_name = f"incident_{self.incident_id:03d}_car{car_id}.mp4"
                     final_path = os.path.abspath(os.path.join(CLIPS_DIR, final_name))
 
-                    print(f"🚨 ИНЦИДЕНТ #{self.incident_id}: Болид {car_id}, {off_count}/4 колес")
+                    print(
+                        f"🚨 ИНЦИДЕНТ #{self.incident_id}: Болид {car_id}, {off_count}/4 колес"
+                    )
                     print(f"   Временный файл: {temp_path}")
 
-                    fourcc = cv2.VideoWriter_fourcc(*'MJPG')
-                    writer = cv2.VideoWriter(temp_path, fourcc, fps, (frame_width, frame_height))
+                    fourcc = cv2.VideoWriter_fourcc(*"MJPG")
+                    writer = cv2.VideoWriter(
+                        temp_path, fourcc, fps, (frame_width, frame_height)
+                    )
 
                     if not writer.isOpened():
                         print(f"❌ Ошибка: VideoWriter не открылся!")
@@ -294,73 +361,128 @@ class RaceTracker:
                         writer.write(f_buf)
 
                     self.active_clip_writers[car_id] = [
-                        writer, CLIP_POST_FRAMES, final_path, temp_path,
-                        ts_str, itype, off_count, frame_no
+                        writer,
+                        CLIP_POST_FRAMES,
+                        final_path,
+                        temp_path,
+                        ts_str,
+                        itype,
+                        off_count,
+                        frame_no,
                     ]
                     print(f"   ✅ Запись началась (осталось {CLIP_POST_FRAMES} кадров)")
-
 
                 x1, y1, x2, y2 = map(int, car_bbox)
                 if off_count == 4:
                     cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 0, 255), 4)
-                    cv2.putText(frame, f"ID {car_id}: FULL OFF-TRACK (4/4)", (x1, y1 - 10),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                    cv2.putText(
+                        frame,
+                        f"ID {car_id}: FULL OFF-TRACK (4/4)",
+                        (x1, y1 - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7,
+                        (0, 0, 255),
+                        2,
+                    )
                     cv2.rectangle(frame, (10, 10), (700, 60), (0, 0, 200), -1)
-                    cv2.putText(frame, f"JUDGE ALERT: CAR {car_id} FULLY OFF TRACK!", (20, 45),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 3)
+                    cv2.putText(
+                        frame,
+                        f"JUDGE ALERT: CAR {car_id} FULLY OFF TRACK!",
+                        (20, 45),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.8,
+                        (255, 255, 255),
+                        3,
+                    )
                 elif off_count > 0:
                     cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 165, 255), 2)
-                    cv2.putText(frame, f"ID {car_id}: Warning ({off_count}/4)", (x1, y1 - 10),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
+                    cv2.putText(
+                        frame,
+                        f"ID {car_id}: Warning ({off_count}/4)",
+                        (x1, y1 - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        (0, 165, 255),
+                        2,
+                    )
                 else:
                     cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 220, 0), 2)
-                    cv2.putText(frame, f"Car ID {car_id}", (x1, y1 - 10),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 220, 0), 1)
+                    cv2.putText(
+                        frame,
+                        f"Car ID {car_id}",
+                        (x1, y1 - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5,
+                        (0, 220, 0),
+                        1,
+                    )
 
             cv2.addWeighted(overlay, 0.45, frame, 0.55, 0, frame)
 
-
             finished = []
             for cid, entry in self.active_clip_writers.items():
-                writer, frames_left, final_path, temp_path, ts_str, itype, off_count, start_frame = entry
+                (
+                    writer,
+                    frames_left,
+                    final_path,
+                    temp_path,
+                    ts_str,
+                    itype,
+                    off_count,
+                    start_frame,
+                ) = entry
                 writer.write(frame)
                 frames_left -= 1
 
                 if frames_left <= 0:
-                    print(f"✅ Завершение записи инцидента {cid}...")
+                    print(f"✅ Завершение записи инцидента для машины {cid}...")
                     writer.release()
 
+                    if os.path.exists(temp_path) and os.path.getsize(temp_path) > 0:
+                        # 1. Вызываем вашу функцию конвертации (из .avi в .mp4)
+                        result_path = convert_to_mp4(temp_path, final_path)
 
-                    if os.path.exists(temp_path):
-                        actual_file = convert_to_mp4(temp_path, final_path)
-                        actual_name = os.path.basename(actual_file)
+                        # 2. Берем размер и имя уже от нового .mp4 файла
+                        file_size = os.path.getsize(result_path)
+                        actual_name = os.path.basename(result_path)
 
-                        file_size = os.path.getsize(actual_file)
-                        print(f"📁 Файл сохранен: {actual_file} ({file_size / 1024 / 1024:.2f} MB)")
-
+                        print(
+                            f"📁 MP4 файл успешно сохранен: {result_path} ({file_size / 1024 / 1024:.2f} MB)"
+                        )
 
                         try:
                             with open(LOG_FILE, "a", newline="", encoding="utf-8") as f:
-                                csv_writer = csv.DictWriter(f, fieldnames=[
-                                    "incident", "frame", "timestamp", "car_id",
-                                    "wheels_out", "type", "clip"
-                                ])
+                                csv_writer = csv.DictWriter(
+                                    f,
+                                    fieldnames=[
+                                        "incident",
+                                        "frame",
+                                        "timestamp",
+                                        "car_id",
+                                        "wheels_out",
+                                        "type",
+                                        "clip",
+                                    ],
+                                )
                                 if f.tell() == 0:
                                     csv_writer.writeheader()
-                                csv_writer.writerow({
-                                    "incident": self.incident_id,
-                                    "frame": start_frame,
-                                    "timestamp": ts_str,
-                                    "car_id": cid,
-                                    "wheels_out": off_count,
-                                    "type": itype,
-                                    "clip": actual_name
-                                })
+
+                                csv_writer.writerow(
+                                    {
+                                        "incident": self.incident_id,  # Убедитесь, что ID инкрементируется при старте записи инцидента
+                                        "frame": start_frame,
+                                        "timestamp": ts_str,
+                                        "car_id": cid,
+                                        "wheels_out": off_count,
+                                        "type": itype,
+                                        "clip": actual_name,  # Передаем чистое имя .mp4 файла
+                                    }
+                                )
                             print(f"📝 Запись добавлена в {LOG_FILE}")
                         except Exception as e:
                             print(f"❌ Ошибка при записи в CSV: {e}")
                     else:
-                        print(f"   ❌ Временный файл не найден!")
+                        print(f"   ❌ Файл поврежден, пуст или не был создан!")
 
                     finished.append(cid)
 

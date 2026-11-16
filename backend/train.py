@@ -7,7 +7,6 @@ def main():
 
     print("Начало обучения")
 
-
     results = model.train(
         data="data.yaml",
         epochs=50,
@@ -21,11 +20,11 @@ def main():
         augment=True,
         degrees=10.0,
         perspective=0.0001,
-        mosaic=1.0
+        mosaic=1.0,
     )
 
     print("Обучение завершено")
-    print("Ищите обученную модель по пути: runs/segment/train/weights/best.pt")
+    print("Путь к модели: runs/segment/train/weights/best.pt")
 
 
 if __name__ == "__main__":
